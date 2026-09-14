@@ -1,0 +1,211 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Donut SMP Price Checker — Live Fetch Prototype</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 12px; background:#111; color:#ddd; }
+    .container { max-width:1000px; margin:0 auto; }
+    textarea { width:100%; height:120px; background:#222; color:#ddd; border:1px solid #333; padding:8px; }
+    .controls { margin:8px 0; display:flex; gap:8px; align-items:center; }
+    button { padding:8px 12px; cursor:pointer; }
+    table { width:100%; border-collapse:collapse; margin-top:8px; }
+    th, td { padding:8px; text-align:left; border-bottom:1px solid #222; }
+    .row-good { background: linear-gradient(90deg,#063b0a20,#063b0a10); border-left:6px solid #0f0; }
+    .row-bad { background: linear-gradient(90deg,#3b060620,#3b060610); border-left:6px solid #f00; }
+    .small { font-size:0.85em; color:#aaa; }
+    .scroll { max-height:520px; overflow:auto; border:1px solid #222; padding:6px; background:#071016; }
+    .sample { font-style:italic; color:#9ac; }
+    .error { color:#f66; }
+    input[type=text] { width:420px; padding:6px; background:#222; color:#ddd; border:1px solid #333; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Donut SMP Price Checker — Live Fetch Prototype</h2>
+    <p class="small">This prototype can fetch prices from the Donut SMP market page and parse item prices. If the site blocks CORS, use a CORS proxy (see instructions below).</p>
+
+    <div class="controls">
+      <label for="url">Market URL:</label>
+      <input id="url" type="text" value="https://donutsmp-mc.com/market" />
+      <button id="fetchBtn">Fetch Market</button>
+      <button id="refreshBtn">Refresh Calculations</button>
+    </div>
+
+    <div class="controls">
+      <label for="proxy">Optional CORS proxy:</label>
+      <input id="proxy" type="text" placeholder="https://cors-anywhere.herokuapp.com/ (if needed)" />
+      <button id="mapBtn">Load Mappings</button>
+    </div>
+
+    <textarea id="rawJson" placeholder="If fetch fails, paste market JSON or HTML here and click Refresh"></textarea>
+
+    <div id="status" class="small"></div>
+    <div class="scroll" id="resultArea"></div>
+
+    <p class="small">Notes: This prototype attempts to find prices in the fetched HTML. It's heuristic; exact mapping may require tuning. Use the paste field if fetch fails.</p>
+  </div>
+
+<script>
+const fetchBtn = document.getElementById('fetchBtn');
+const refreshBtn = document.getElementById('refreshBtn');
+const urlInput = document.getElementById('url');
+const proxyInput = document.getElementById('proxy');
+const rawJson = document.getElementById('rawJson');
+const status = document.getElementById('status');
+const resultArea = document.getElementById('resultArea');
+
+fetchBtn.onclick = async () => {
+  setStatus('Fetching market page...');
+  const url = urlInput.value.trim();
+  let fetchUrl = url;
+  const proxy = proxyInput.value.trim();
+  if (proxy) fetchUrl = proxy.replace(/\/$/, '') + '/' + url.replace(/^https?:\/\//, '');
+  try {
+    const res = await fetch(fetchUrl);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const text = await res.text();
+    rawJson.value = text;
+    setStatus('Fetched market page. Click Refresh Calculations to parse and compute profits.');
+  } catch (e) {
+    setStatus('Fetch failed: ' + e.message, true);
+  }
+};
+
+refreshBtn.onclick = () => {
+  setStatus('Parsing and calculating...');
+  const input = rawJson.value.trim();
+  if (!input) { setStatus('No data to parse. Fetch or paste HTML/JSON into the box above.', true); return; }
+  // try to parse JSON first
+  let parsed = null;
+  try {
+    parsed = JSON.parse(input);
+  } catch (e) {
+    // not JSON — try to parse HTML and extract prices
+    parsed = parseMarketHtml(input);
+  }
+  if (!parsed || !parsed.items) { setStatus('Parsed data did not contain items. See console for parsed object.', true); console.log(parsed); return; }
+  renderResults(calculateFromParsed(parsed));
+  setStatus('Done.');
+};
+
+function setStatus(s, isErr=false) { status.textContent = s; status.className = isErr ? 'error small' : 'small'; }
+
+function parseMarketHtml(html) {
+  // Heuristic parsing: find table rows or elements that look like item rows.
+  // This will vary by site. For donutsmp-mc.com we look for price numbers and item names nearby.
+  const items = {};
+  // Simple regex: find occurrences like <div class="market-item"> ... <h3>Item Name</h3> ... <div class="price">12,345</div>
+  // We'll try to capture "£" or currency-like groups
+  const nameRegex = /([A-Za-z0-9 _\-']{2,60})\s*(?:<\\/h[1-6]>|<\\/div>|<\\/span>|)\s*[^\n]{0,80}?([0-9,]{2,8})/g;
+  // Fallback: find all numbers with context words
+  // Use DOM parsing to be safer
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    // look for elements that contain both a name and a number
+    const possible = Array.from(doc.querySelectorAll('*')).filter(el => el.textContent && /[0-9]\d{2,}/.test(el.textContent));
+    possible.slice(0,200).forEach(el => {
+      const txt = el.textContent.trim();
+      // try to find number
+      const numMatch = txt.match(/([0-9][0-9,]{1,})/);
+      if (!numMatch) return;
+      // find nearest preceding sibling or parent that looks like a name
+      let name = null;
+      // try heading in parent chain
+      let p = el;
+      for (let i=0;i<5 && p; i++) {
+        const h = p.querySelector && (p.querySelector('h1,h2,h3,h4,h5,h6') || p.querySelector('h3') );
+        if (h && h.textContent && h.textContent.trim().length>1) { name = h.textContent.trim(); break; }
+        p = p.parentElement;
+      }
+      if (!name) {
+        // try previousElementSibling text
+        const prev = el.previousElementSibling;
+        if (prev && prev.textContent && prev.textContent.trim().length>1) name = prev.textContent.trim();
+      }
+      if (!name) return;
+      const number = Number(numMatch[1].replace(/,/g,''));
+      if (!items[name]) items[name] = { price: number, qty: 1 };
+    });
+    return { items };
+  } catch (e) {
+    console.error('HTML parse fail', e);
+    return { items };
+  }
+}
+
+function calculateFromParsed(parsed) {
+  // parsed.items expected shape { "Item Name": { price: 12345, qty: 1 }, ... }
+  // We'll map site names to internal item keys using a simple normalization (lowercase, remove spaces)
+  const mappings = loadMappings();
+  const items = {};
+  for (const [name, v] of Object.entries(parsed.items)) {
+    const norm = normalizeName(name);
+    const key = mappings[norm] || norm;
+    items[key] = { price: Number(v.price), qty: v.qty || 1, siteName: name };
+  }
+  // default conversions
+  const conversions = [
+    { from:'bone', from_qty:64, to:'bone_meal', to_qty:192 },
+    { from:'coal_block', from_qty:1, to:'coal', to_qty:9 },
+    { from:'diamond_block', from_qty:1, to:'diamond', to_qty:9 },
+    { from:'iron_block', from_qty:1, to:'iron_ingot', to_qty:9 },
+    { from:'gold_block', from_qty:1, to:'gold_ingot', to_qty:9 }
+  ];
+
+  const rows = [];
+  for (const c of conversions) {
+    const from = items[c.from];
+    const to = items[c.to];
+    if (!from || !to) {
+      rows.push({ name: `${c.from} → ${c.to}`, note: 'missing price side', ok:false, cost:null, revenue:null, profit:null, pct:null, details:`Missing ${!from?c.from:''} ${!to?c.to:''}` });
+      continue;
+    }
+    const cost = from.price * (c.from_qty / (from.qty || 1));
+    const revenue = to.price * (c.to_qty / (to.qty || 1));
+    const profit = revenue - cost;
+    const pct = cost === 0 ? null : profit / cost * 100;
+    rows.push({ name:`${c.from} → ${c.to}`, note:`${c.from_qty} ${c.from} → ${c.to_qty} ${c.to}`, ok: profit>0, cost, revenue, profit, pct, details:`Site names: ${from.siteName} → ${to.siteName}` });
+  }
+  return { rows, items };
+}
+
+function loadMappings() {
+  // small built-in mapping; you can expand
+  return {
+    'bone': 'bone', 'bone meal':'bone_meal', 'bone_meal':'bone_meal',
+    'coal block':'coal_block', 'coal':'coal',
+    'diamond block':'diamond_block', 'diamond':'diamond',
+    'iron block':'iron_block', 'iron ingot':'iron_ingot', 'gold block':'gold_block', 'gold ingot':'gold_ingot'
+  };
+}
+
+function normalizeName(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); }
+
+function renderResults(result) {
+  resultArea.innerHTML = '';
+  if (!result.rows || result.rows.length===0) { resultArea.textContent = 'No conversion rows to show.'; return; }
+  const table = document.createElement('table');
+  const thead = document.createElement('thead');
+  thead.innerHTML = `<tr><th>Conversion</th><th class="small">Conversion</th><th>Cost</th><th>Revenue</th><th>Profit</th><th>Profit %</th><th class="small">Details</th></tr>`;
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  result.rows.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.className = r.ok ? 'row-good' : 'row-bad';
+    const profitTxt = r.profit===null?'-':Math.round(r.profit).toLocaleString();
+    const costTxt = r.cost===null?'-':Math.round(r.cost).toLocaleString();
+    const revTxt = r.revenue===null?'-':Math.round(r.revenue).toLocaleString();
+    const pctTxt = r.pct===null?'-':r.pct.toFixed(1)+'%';
+    tr.innerHTML = `<td><strong>${escapeHtml(r.name)}</strong></td><td class="small">${escapeHtml(r.note||'')}</td><td>${costTxt}</td><td>${revTxt}</td><td>${profitTxt}</td><td>${pctTxt}</td><td class="small">${escapeHtml(r.details||'')}</td>`;
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  resultArea.appendChild(table);
+}
+
+function escapeHtml(s) { if (!s) return ''; return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"})[m]); }
+
+</script>
+</body>
+</html>

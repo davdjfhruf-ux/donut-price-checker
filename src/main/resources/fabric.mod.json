@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "donut-price-checker",
+  "name": "Donut Price Checker",
+  "description": "Client-side Fabric mod to fetch Donut SMP market prices and calculate profitable item conversions.",
+  "version": "0.1.0",
+  "entrypoints": {
+    "main": ["com.donut.pricechecker.PriceCheckerMod"]
+  },
+  "depends": {
+    "fabricloader": ">=0.14.0",
+    "fabric": "*"
+  }
+}

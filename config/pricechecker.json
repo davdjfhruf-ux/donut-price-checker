@@ -1,0 +1,12 @@
+{
+  "items": {
+    "bone": { "price": 20000, "qty": 64 },
+    "bone_meal": { "price": 9300, "qty": 64 },
+    "coal_block": { "price": 3500, "qty": 1 },
+    "coal": { "price": 120, "qty": 1 }
+  },
+  "conversions": [
+    { "from": "bone", "from_qty": 64, "to": "bone_meal", "to_qty": 192 },
+    { "from": "coal_block", "from_qty": 1, "to": "coal", "to_qty": 9 }
+  ]
+}
