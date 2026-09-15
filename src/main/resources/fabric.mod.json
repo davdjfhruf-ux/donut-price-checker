@@ -1,14 +1,23 @@
 {
   "schemaVersion": 1,
-  "id": "donut-price-checker",
-  "name": "Donut Price Checker",
-  "description": "Client-side Fabric mod to fetch Donut SMP market prices and calculate profitable item conversions.",
-  "version": "0.1.0",
-  "entrypoints": {
-    "main": ["com.donut.pricechecker.PriceCheckerMod"]
+  "id": "${mod_id}",
+  "version": "${version}",
+  "name": "${mod_name}",
+  "description": "Live market price checker for Donut SMP. Calculates profit for item conversions and shows green/red UI.",
+  "authors": ["davdjfhruf-ux"],
+  "license": "MIT",
+  "contact": {
+    "homepage": "https://github.com/davdjfhruf-ux/donut-price-checker"
   },
+  "environment": "*",
+  "entrypoints": {
+    "main": ["com.donutsmp.DonutPriceCheckerMod"],
+    "client": ["com.donutsmp.client.DonutPriceCheckerClient"]
+  },
+  "mixins": [],
   "depends": {
-    "fabricloader": ">=0.14.0",
-    "fabric": "*"
+    "fabricloader": ">=0.15",
+    "minecraft": "~1.21.1",
+    "java": ">=21"
   }
 }
